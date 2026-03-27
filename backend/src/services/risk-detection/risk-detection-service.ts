@@ -1,3 +1,6 @@
+The following is the integrated code for the `RiskDetectionService`, resolving the merge conflicts by including the `webhookService` and ensuring consistent string quoting:
+
+```typescript
 /**
  * Risk Detection Service
  * Core service for computing and managing subscription risk scores
@@ -6,6 +9,7 @@
 import { supabase } from "../../config/database";
 import logger from "../../config/logger";
 import { Subscription } from "../../types/subscription";
+import { webhookService } from "../webhook-service";
 import {
   RiskAssessment,
   RiskScore,
@@ -130,6 +134,13 @@ export class RiskDetectionService {
     userId: string,
   ): Promise<RiskScore> {
     try {
+      // Get old score to check for change
+      const { data: oldScore } = await supabase
+        .from("subscription_risk_scores")
+        .select("risk_level")
+        .eq("subscription_id", assessment.subscription_id)
+        .single();
+
       const { data, error } = await supabase
         .from("subscription_risk_scores")
         .upsert(
@@ -150,6 +161,17 @@ export class RiskDetectionService {
 
       if (error) {
         throw new Error(`Failed to save risk score: ${error.message}`);
+      }
+
+      if (data && oldScore && oldScore.risk_level !== assessment.risk_level) {
+        webhookService.dispatchEvent(userId, "subscription.risk_score_changed", {
+          subscription_id: assessment.subscription_id,
+          old_risk_level: oldScore.risk_level,
+          new_risk_level: assessment.risk_level,
+          risk_factors: assessment.risk_factors
+        }).catch(err => {
+          logger.error("Failed to dispatch subscription.risk_score_changed webhook:", err);
+        });
       }
 
       return data as RiskScore;
@@ -323,3 +345,4 @@ export class RiskDetectionService {
 }
 
 export const riskDetectionService = new RiskDetectionService();
+```
